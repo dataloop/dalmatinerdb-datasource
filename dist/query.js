@@ -122,42 +122,57 @@ System.register(["lodash", "moment"], function (_export, _context) {
             return new DalmatinerQueryCondition('or', this, other);
           }
         }, {
+          key: "sourceFilter",
+          value: function sourceFilter() {
+            if (this.op === 'eq') {
+              var _args = _slicedToArray(this.args, 2);
+
+              var tag = _args[0];
+              var value = _args[1];
+
+              if (_.isEqual(tag, ["dl", "source"])) {
+                return { 'enabled': true, value: value };
+              }
+            }
+            return { 'enabled': false, 'value': '' };
+          }
+        }, {
           key: "toString",
           value: function toString() {
             var tag, value, a, b;
             switch (this.op) {
               case 'eq':
-                var _args = _slicedToArray(this.args, 2);
-
-                tag = _args[0];
-                value = _args[1];
-
-                return this._encodeTag(tag) + " = '" + value + "'";
-              case 'neq':
                 var _args2 = _slicedToArray(this.args, 2);
 
                 tag = _args2[0];
                 value = _args2[1];
 
-                return this._encodeTag(tag) + " != '" + value + "'";
-              case 'present':
-                var _args3 = _slicedToArray(this.args, 1);
+                return this._encodeTag(tag) + " = '" + value + "'";
+              case 'neq':
+                var _args3 = _slicedToArray(this.args, 2);
 
                 tag = _args3[0];
+                value = _args3[1];
+
+                return this._encodeTag(tag) + " != '" + value + "'";
+              case 'present':
+                var _args4 = _slicedToArray(this.args, 1);
+
+                tag = _args4[0];
 
                 return this._encodeTag(tag);
               case 'and':
-                var _args4 = _slicedToArray(this.args, 2);
-
-                a = _args4[0];
-                b = _args4[1];
-
-                return a + " AND " + b;
-              case 'or':
                 var _args5 = _slicedToArray(this.args, 2);
 
                 a = _args5[0];
                 b = _args5[1];
+
+                return a + " AND " + b;
+              case 'or':
+                var _args6 = _slicedToArray(this.args, 2);
+
+                a = _args6[0];
+                b = _args6[1];
 
                 return a + " OR " + b;
             }
@@ -275,12 +290,23 @@ System.register(["lodash", "moment"], function (_export, _context) {
         }, {
           key: "toString",
           value: function toString() {
-            var metric = this._encodeMetric(),
-                collection = this._encodeCollection(),
-                str = metric + " FROM " + collection;
-            if (this.condition) {
-              str += " WHERE " + this.condition;
+            var sourceFilter = this.condition && this.condition.sourceFilter();
+            var metric = this._encodeMetric();
+
+            var str = '';
+
+            if (sourceFilter && sourceFilter.enabled) {
+              var bucket = sourceFilter.value.substring(0, 2);
+              str = "'" + sourceFilter.value + "'." + metric + " BUCKET '" + bucket + "'";
+            } else {
+              var collection = this._encodeCollection();
+              str = metric + " FROM " + collection;
+
+              if (this.condition) {
+                str += " WHERE " + this.condition;
+              }
             }
+
             return str;
           }
         }, {
