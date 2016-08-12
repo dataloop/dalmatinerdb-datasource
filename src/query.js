@@ -1,6 +1,11 @@
 import _ from "lodash";
 import moment from "moment";
 
+function _assert(condition, message) {
+  if (! condition) {
+    throw new Error(message);
+  }
+}
 
 class DalmatinerQueryCondition {
   constructor (op, ...args) {
@@ -54,7 +59,9 @@ class DalmatinerQueryCondition {
 }
 
 class DalmatinerProjection {
-  constructor() {}
+  constructor(refId) {
+    this.refId = refId || '';
+  }
 
   aliasBy(alias) {
     this.alias = alias;
@@ -63,6 +70,11 @@ class DalmatinerProjection {
 
   shiftBy(timeshift) {
     this.timeshift = timeshift;
+    return this;
+  }
+
+  setVisibility(hidden) {
+    this.hidden = hidden;
     return this;
   }
 
@@ -79,8 +91,8 @@ class DalmatinerProjection {
 }
 
 class DalmatinerFunction extends DalmatinerProjection {
-  constructor(fun, args, vars) {
-    super();
+  constructor(fun, args, vars, refId) {
+    super(refId);
     this.fun = fun;
     this.args = args;
     this.vars = vars;
@@ -96,9 +108,7 @@ class DalmatinerFunction extends DalmatinerProjection {
     if (typeof arg === 'string' && arg[0] === '$') {
       let varname = arg.slice(1);
       arg = this.vars[varname];
-      if (_.isUndefined(arg)) {
-        throw new Error(`Variable ${varname} was not declared`);
-      }
+      _assert(!(_.isUndefined(arg)), `Variable ${varname} was not declared`);
     }
     return '' + arg;
   }
@@ -106,13 +116,12 @@ class DalmatinerFunction extends DalmatinerProjection {
 
 class DalmatinerSelector extends DalmatinerProjection {
 
-  constructor(collection, metric, variables) {
-    super();
+  constructor(collection, metric, refId) {
+    super(refId);
     this.collection = collection;
     this.metric = _.map(metric, function (mpart) {
       return mpart.value ? mpart.value : mpart.toString();
     });
-    this.variables = variables;
   }
 
   where(condition) {
@@ -187,10 +196,10 @@ export class DalmatinerQuery {
     return this;
   }
 
-  select(m) {
-    if (! this.collection)
-      throw new Error("You need to set collection (from statement) before selecting metric");
-    var selector = new DalmatinerSelector(this.collection, m);
+  select(m, refId) {
+    _assert(this.collection,
+        "You need to set collection (from statement) before selecting metric");
+    var selector = new DalmatinerSelector(this.collection, m, refId);
     this.selectors.push(selector);
     this.parts.push(selector);
     this.active = this.parts.length - 1;
@@ -213,9 +222,7 @@ export class DalmatinerQuery {
   }
 
   where(condition) {
-    if (! condition instanceof DalmatinerQueryCondition) {
-      throw new Error("Invalid query condition");
-    }
+    _assert(condition instanceof DalmatinerQueryCondition, "Invalid query condition");
     this.selectors[this.active].where(condition);
     return this;
   }
@@ -230,14 +237,40 @@ export class DalmatinerQuery {
     return this;
   }
 
+  setVisibility(hidden) {
+    this.parts[this.active].setVisibility(hidden);
+    return this;
+  }
+
   apply(fun, args = []) {
-    if (_.isUndefined(this.active))
-      throw new Error("You need to select something before you can apply functions");
+    _assert(!(_.isUndefined(this.active)),
+      "You need to select something before you can apply functions");
 
     var part = this.parts[this.active],
         fargs = [part].concat(args),
-        f = new DalmatinerFunction(fun, fargs, this.variables);
+        f = new DalmatinerFunction(fun, fargs, this.variables, part.refId);
 
+    this.parts[this.active] = f;
+    return this;
+  }
+
+  applyToSeries(fun, args = [], refId) {
+    const refIdRegex = /#([A-Z])/;
+
+    _assert(!(_.isUndefined(this.active)),
+      "You need to select something before you can apply functions");
+    _assert(refIdRegex.test(_.head(args)), "Invalid reference for series");
+
+    var targetRefId = refIdRegex.exec(_.head(args))[1],
+        part = this.parts[this.active],
+        refPart = _.find(this.parts, p => { return p.refId === targetRefId; }),
+        fargs = [],
+        f = null;
+
+    _assert(!(_.isUndefined(refPart)), "Invalid reference for series");
+
+    fargs = [part].concat(refPart),
+    f = new DalmatinerFunction(fun, fargs, this.variables, part.refId);
     this.parts[this.active] = f;
     return this;
   }
@@ -245,9 +278,11 @@ export class DalmatinerQuery {
   /**
    * Reading function
    */
-
   toString() {
-    return this.toUserString() + ' ' + this._encodeRange();
+    if (!this._visibleParts().length)
+      return '';
+    else
+      return this.toUserString() + ' ' + this._encodeRange();
   }
 
   toUserString() {
@@ -265,7 +300,10 @@ export class DalmatinerQuery {
   }
 
   _encodeProjections() {
-    return this.parts.map(p => { return p.encode(); });
+    return this._visibleParts().map(p => { return p.encode(); });
   }
 
+  _visibleParts() {
+    return _.filter(this.parts, p => {return !p.hidden});
+  }
 };
